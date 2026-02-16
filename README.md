@@ -154,9 +154,9 @@ The **PR Review Agent** combines deterministic static analysis with LLM-powered 
 ### Prerequisites
 
 - Python 3.11+
-- Docker & Docker Compose (optional but recommended)
+- Docker & Docker Compose 
 - GitHub App credentials
-- LLM API key (OpenAI, Anthropic, or Azure)
+- LLM API key (OpenAI)
 
 ### 1. Clone the Repository
 
@@ -508,9 +508,6 @@ The agent listens for:
 
 ---
 
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
 ### Development Setup
 
@@ -528,13 +525,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - Maintain >80% code coverage
 - Use type hints
 - Document public APIs
-
----
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
+  
 ---
 
 ## Acknowledgments
