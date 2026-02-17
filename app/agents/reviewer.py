@@ -7,6 +7,7 @@ invoking the LLM, evaluating confidence, and optionally refining the review.
 
 import logging
 from typing import Dict, Any, Optional, List
+import json
 
 from app.config import Settings
 from app.github.client import GitHubClient
@@ -16,9 +17,9 @@ from app.llm.prompts import (
     build_review_prompt,
     build_refinement_prompt,
 )
-from app.llm.schemas import CodeReview, ReviewRecommendation
-from app.agent.tools import ToolRegistry, ToolType
-from app.agent.confidence import ConfidenceEvaluator, ConfidenceFactors
+from app.llm.schemas import CodeReview, ReviewRecommendation, Finding, InlineComment
+from app.agents.tools import ToolRegistry, ToolType
+from app.agents.confidence import ConfidenceEvaluator, ConfidenceFactors
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +33,13 @@ class ReviewContext:
         repo: str,
         pr_number: int,
         pr_info: Dict[str, Any],
+        installation_id: int,
     ):
         self.owner = owner
         self.repo = repo
         self.pr_number = pr_number
         self.pr_info = pr_info
+        self.installation_id = installation_id
         
         # Intermediate results
         self.diff_info: Optional[Dict] = None
@@ -86,6 +89,7 @@ class PRReviewer:
         repo: str,
         pr_number: int,
         pr_info: Dict[str, Any],
+        installation_id: int,
     ) -> Dict[str, Any]:
         """
         Execute complete PR review.
@@ -104,7 +108,8 @@ class PRReviewer:
         logger.info(f"Starting review for {owner}/{repo}#{pr_number}")
         
         # Initialize context
-        context = ReviewContext(owner, repo, pr_number, pr_info)
+        context = ReviewContext(owner, repo, pr_number, pr_info, installation_id)
+
         
         try:
             # Step 1: Fetch and analyze PR
@@ -123,52 +128,51 @@ class PRReviewer:
             await self._refine_if_needed(context)
             
             # Step 6: Finalize recommendation
+            # Step 6: Finalize recommendation
             final_result = self._finalize_review(context)
-            
+
             logger.info(
                 f"Review complete: {final_result['recommendation']} "
                 f"(confidence: {final_result['confidence']:.2f}, "
                 f"iterations: {context.iterations})"
             )
+
             
+            await self._publish_review(context, final_result)
+
             return final_result
+
             
         except Exception as e:
             logger.error(f"Review failed: {e}", exc_info=True)
             raise
     
     async def _fetch_pr_data(self, context: ReviewContext) -> None:
-        """Fetch PR diff and metadata."""
-        logger.info("Fetching PR data...")
-        
-        # Fetch diff
-        diff_result = await self.tools.execute_tool(
-            ToolType.DIFF_FETCH,
-            owner=context.owner,
-            repo=context.repo,
-            pr_number=context.pr_number,
-        )
-        
-        if not diff_result.success:
-            raise Exception(f"Failed to fetch diff: {diff_result.error}")
-        
-        context.diff_info = diff_result.data
-        logger.info(
-            f"Fetched diff: {context.diff_info['total_changes']} lines, "
-            f"{len(context.diff_info['files'])} files"
-        )
-        
-        # Detect risks
-        risk_result = await self.tools.execute_tool(
-            ToolType.RISK_DETECTION,
-            diff_content=context.diff_info["diff"],
-            file_paths=context.diff_info["files"],
-            lines_changed=context.diff_info["total_changes"],
-        )
-        
-        if risk_result.success:
-            context.risk_signals = risk_result.data
-            logger.info(f"Risk signals: {context.risk_signals}")
+        """Fetch PR data from GitHub."""
+        try:
+            logger.info("Fetching PR data...")
+            
+            diff_result = await self.tools.execute_tool(
+                ToolType.DIFF_FETCH,
+                owner=context.owner,
+                repo=context.repo,
+                pr_number=context.pr_number,
+                installation_id=context.installation_id,
+            )
+            
+            if not diff_result.success:
+                raise Exception(f"Diff fetch failed: {diff_result.error}")
+            
+            # Store diff info - it's a PRDiff object, not a dict
+            context.diff_info = diff_result.data
+            logger.info(
+                "Diff info stored",
+                extra={"diff_object_type": type(context.diff_info).__name__}
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch PR data: {e}", exc_info=True)
+            raise
     
     async def _run_static_analysis(self, context: ReviewContext) -> None:
         """Run static analysis tools on changed files."""
@@ -199,28 +203,37 @@ class PRReviewer:
         """Generate LLM-based review."""
         logger.info(f"Generating review (iteration {context.iterations + 1})...")
         
-        # Build prompt
-        user_prompt = build_review_prompt(
-            pr_title=context.pr_info.get("title", ""),
-            pr_description=context.pr_info.get("description"),
-            diff_content=context.diff_info["diff"],
-            static_analysis_results=context.static_analysis,
-            risk_signals=context.risk_signals,
-            file_context=context.file_context,
-        )
-        
-        # Generate review
-        context.review = await self.llm_client.generate_review(
-            system_prompt=SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            temperature=0.0,  # Deterministic
-        )
-        
-        context.iterations += 1
-        logger.info(
-            f"Generated review with {len(context.review.comments)} comments, "
-            f"recommendation: {context.review.recommendation}"
-        )
+        try:
+            # Access PRDiff attributes correctly
+            diff_content = getattr(context.diff_info, 'unified_diff', '') or getattr(context.diff_info, 'raw_diff', '')
+            
+            user_prompt = build_review_prompt(
+                pr_title=context.pr_info.get("title", ""),
+                pr_description=context.pr_info.get("description", ""),
+                diff_content=diff_content,
+                static_analysis_results=context.static_analysis,
+                risk_signals=context.risk_signals,
+                file_context=context.file_context,
+            )
+            
+            # Call LLM - it returns a CodeReview object directly
+            context.review = await self.llm_client.generate_review(
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+            )
+            
+            logger.info(
+                "Review generated successfully",
+                extra={
+                    "risk_score": context.review.risk_score,
+                    "recommendation": context.review.recommendation.value,
+                    "findings_count": len(context.review.findings),
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Review generation failed: {e}", exc_info=True)
+            raise
     
     async def _evaluate_confidence(self, context: ReviewContext) -> None:
         """Evaluate confidence in the generated review."""
@@ -239,9 +252,81 @@ class PRReviewer:
         )
         
         logger.info(
-            f"Confidence: {context.confidence_evaluation['overall_confidence']:.2f}, "
-            f"needs_human: {context.confidence_evaluation['needs_human_review']}"
+            f"Confidence: {context.confidence_evaluation.overall_score:.2f}, "
+            f"level: {context.confidence_evaluation.level}"
         )
+        
+    async def _publish_review(self, context: ReviewContext, result: Dict[str, Any]) -> None:
+        """Publish review to GitHub."""
+        logger.info("Publishing review to GitHub...")
+        try:
+            # Validate review exists
+            if not context.review:
+                logger.error("No review generated to publish")
+                return
+            
+            if not context.diff_info:
+                logger.error("No diff info available for publishing")
+                return
+            
+            # Extract commit SHA from PRDiff object (not dict)
+            # Assuming PRDiff has 'head_sha' attribute
+            commit_id = getattr(context.diff_info, 'head_sha', None) or getattr(context.diff_info, 'sha', None)
+            if not commit_id:
+                logger.error(
+                    "Missing commit SHA in diff_info",
+                    extra={"diff_info_attrs": dir(context.diff_info)}
+                )
+                return
+            
+            # Convert review to markdown
+            review_body = context.review.to_markdown() if hasattr(context.review, 'to_markdown') else str(context.review)
+            
+            # Determine review event from recommendation
+            recommendation = result.get("recommendation")
+            if not recommendation:
+                logger.error("No recommendation in result")
+                return
+            
+            event = recommendation.value if hasattr(recommendation, 'value') else str(recommendation)
+            
+            logger.info(
+                f"Posting review with event: {event}",
+                extra={
+                    "pr": f"{context.owner}/{context.repo}#{context.pr_number}",
+                    "commit_id": commit_id,
+                }
+            )
+            
+            # Create review on GitHub
+            response = self.github_client.create_review(
+                owner=context.owner,
+                repo=context.repo,
+                pr_number=context.pr_number,
+                commit_id=commit_id,
+                body=review_body,
+                event=event,
+                installation_id=context.installation_id,
+            )
+            
+            logger.info(
+                "Review successfully published to GitHub",
+                extra={
+                    "pr": f"{context.owner}/{context.repo}#{context.pr_number}",
+                    "review_id": response.get("id"),
+                    "recommendation": event,
+                }
+            )
+            
+        except Exception as e:
+            logger.error(
+                f"Failed to publish review: {e}",
+                exc_info=True,
+                extra={
+                    "pr": f"{context.owner}/{context.repo}#{context.pr_number}",
+                }
+            )
+            raise
     
     async def _refine_if_needed(self, context: ReviewContext) -> None:
         """Refine review if confidence is low and iterations remain."""
@@ -250,46 +335,16 @@ class PRReviewer:
             logger.info("Max iterations reached, skipping refinement")
             return
         
-        confidence = context.confidence_evaluation["overall_confidence"]
+        confidence = context.confidence_evaluation.overall_score
         if confidence >= self.settings.AGENT_CONFIDENCE_THRESHOLD:
             logger.info("Confidence threshold met, skipping refinement")
             return
         
         logger.info(f"Low confidence ({confidence:.2f}), attempting refinement...")
         
-        # Identify what to improve
-        uncertain_areas = context.confidence_evaluation.get("uncertain_areas", [])
-        feedback = self._generate_refinement_feedback(context, uncertain_areas)
-        
-        # Build refinement prompt
-        refinement_prompt = build_refinement_prompt(
-            original_review=context.review.model_dump(),
-            feedback=feedback,
-            iteration=context.iterations,
-        )
-        
-        # Generate refined review
-        try:
-            refined_review = await self.llm_client.generate_review(
-                system_prompt=SYSTEM_PROMPT,
-                user_prompt=refinement_prompt,
-                temperature=0.1,  # Slightly more creative for refinement
-            )
-            
-            context.review = refined_review
-            context.iterations += 1
-            
-            # Re-evaluate confidence
-            await self._evaluate_confidence(context)
-            
-            logger.info(
-                f"Refinement complete. New confidence: "
-                f"{context.confidence_evaluation['overall_confidence']:.2f}"
-            )
-            
-        except Exception as e:
-            logger.error(f"Refinement failed: {e}")
-            # Keep original review
+        # For now, skip refinement - simplified version
+        # In full implementation, would improve uncertain areas
+        logger.info("Refinement skipped in Phase 1")
     
     def _generate_refinement_feedback(
         self,
@@ -304,62 +359,28 @@ class PRReviewer:
         for area in uncertain_areas:
             feedback_parts.append(f"- {area}")
         
-        # Add specific guidance based on review characteristics
-        if len(context.review.comments) < 3 and context.diff_info["total_changes"] > 100:
-            feedback_parts.append(
-                "- Consider adding more detailed comments for this large PR"
-            )
-        
-        if context.review.has_blocking_issues():
-            critical_comments = [
-                c for c in context.review.comments
-                if c.severity.value in ["critical", "error"]
-            ]
-            low_confidence = [c for c in critical_comments if c.confidence < 0.8]
-            if low_confidence:
-                feedback_parts.append(
-                    f"- Verify {len(low_confidence)} critical/error comments with low confidence"
-                )
-        
         return "\n".join(feedback_parts)
+    
+    
+
     
     def _finalize_review(self, context: ReviewContext) -> Dict[str, Any]:
         """Finalize and package the review result."""
         
-        # Ensure recommendation aligns with issues
-        recommendation = self._determine_final_recommendation(context.review)
+        # Ensure recommendation aligns with review
+        recommendation = context.review.recommendation
         
         return {
             "review": context.review,
             "recommendation": recommendation,
-            "confidence": context.confidence_evaluation["overall_confidence"],
-            "needs_human_review": context.confidence_evaluation["needs_human_review"],
-            "reasoning": context.confidence_evaluation["reasoning"],
-            "uncertain_areas": context.confidence_evaluation["uncertain_areas"],
+            "confidence": context.confidence_evaluation.overall_score,
+            "confidence_level": context.confidence_evaluation.level,
             "iterations": context.iterations,
             "static_analysis_summary": self._summarize_static_analysis(
                 context.static_analysis
             ),
             "risk_signals": context.risk_signals,
         }
-    
-    def _determine_final_recommendation(
-        self,
-        review: CodeReview,
-    ) -> ReviewRecommendation:
-        """
-        Determine final recommendation based on issues.
-        
-        Enforces logic: CRITICAL/ERROR issues → REQUEST_CHANGES
-        """
-        if review.has_blocking_issues():
-            return ReviewRecommendation.REQUEST_CHANGES
-        
-        if len(review.comments) == 0:
-            return ReviewRecommendation.APPROVE
-        
-        # Return the LLM's recommendation for non-blocking cases
-        return review.recommendation
     
     def _summarize_static_analysis(
         self,

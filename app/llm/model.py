@@ -12,8 +12,12 @@ from typing import Dict, Optional, Any
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.config import Settings
-from app.llm.schemas import CodeReview
-
+from app.llm.schemas import (
+    CodeReview,
+    ReviewRecommendation,
+    Finding,
+    InlineComment,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -76,33 +80,49 @@ class LLMClient(ABC):
         pass
     
     def _parse_review(self, response_text: str) -> CodeReview:
-        """
-        Parse LLM response into CodeReview schema.
-        
-        Args:
-            response_text: Raw LLM response text
-        
-        Returns:
-            Validated CodeReview object
-        
-        Raises:
-            LLMError: If parsing or validation fails
-        """
+        """Parse LLM response into CodeReview object."""
         try:
-            # Try to extract JSON from response
-            json_str = self._extract_json(response_text)
-            data = json.loads(json_str)
+            # Extract JSON from response
+            review_data = json.loads(response_text)
             
-            # Validate against schema
-            review = CodeReview(**data)
-            logger.info(f"Parsed review with {len(review.comments)} comments")
+            # Parse findings
+            findings = []
+            for finding_data in review_data.get("findings", []):
+                findings.append(Finding(
+                    category=finding_data.get("category", ""),
+                    severity=finding_data.get("severity", "info"),
+                    title=finding_data.get("title", ""),
+                    description=finding_data.get("description", ""),
+                    suggestion=finding_data.get("suggestion"),
+                    file_path=finding_data.get("file_path"),
+                    line_number=finding_data.get("line_number"),
+                ))
+            
+            # Parse inline comments
+            inline_comments = []
+            for comment_data in review_data.get("inline_comments", []):
+                inline_comments.append(InlineComment(
+                    file_path=comment_data.get("file_path", ""),
+                    line_number=comment_data.get("line_number", 0),
+                    suggestion=comment_data.get("suggestion", ""),
+                    severity=comment_data.get("severity", "info"),
+                ))
+            
+            # Create CodeReview object
+            review = CodeReview(
+                summary=review_data.get("summary", ""),
+                risk_score=float(review_data.get("risk_score", 5.0)),
+                recommendation=ReviewRecommendation(review_data.get("recommendation", "COMMENT")),
+                findings=findings,
+                inline_comments=inline_comments,
+                metrics=review_data.get("metrics"),
+            )
+            
+            logger.info(f"Successfully parsed review: {review.recommendation.value}")
             return review
             
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON: {e}")
-            raise LLMError(f"Invalid JSON response: {e}")
-        except Exception as e:
-            logger.error(f"Failed to validate review schema: {e}")
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.error(f"Failed to parse review JSON: {e}")
             raise LLMError(f"Schema validation failed: {e}")
     
     def _extract_json(self, text: str) -> str:

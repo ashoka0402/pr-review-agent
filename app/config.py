@@ -7,8 +7,10 @@ All secrets and configuration are managed through environment variables.
 
 import os
 from typing import List
-from pydantic_settings import BaseSettings
+# from pydantic_settings import BaseSettings
 from pydantic import Field, validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 
 class Settings(BaseSettings):
@@ -54,6 +56,8 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str = Field(default="", env="S3_BUCKET_NAME")
     S3_LOGS_PREFIX: str = Field(default="logs/", env="S3_LOGS_PREFIX")
     S3_REVIEWS_PREFIX: str = Field(default="reviews/", env="S3_REVIEWS_PREFIX")
+    S3_ENABLED: bool = Field(default=False, env="S3_ENABLED")
+
     
     # Static Analysis Configuration
     ENABLE_LINTING: bool = Field(default=True, env="ENABLE_LINTING")
@@ -127,10 +131,15 @@ class Settings(BaseSettings):
             return v.replace("\\n", "\n")
         return v
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+    model_config = SettingsConfigDict(
+    env_file=".env",
+    env_file_encoding="utf-8",
+    case_sensitive=True,
+    extra="ignore",
+)
+
+
+
 
 
 # Global settings instance
