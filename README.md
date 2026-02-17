@@ -4,8 +4,8 @@
 
 An intelligent, production-grade GitHub App that automatically analyzes pull requests and provides structured, actionable code review feedback powered by LLMs and static analysis.
 
-[![CI Pipeline](https://github.com/your-org/pr-review-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/pr-review-agent/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 ---
@@ -553,4 +553,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Made with ❤️ by the PR Review Agent Team**
+**Made with ❤️ and lots of research by the PR Review Agent Team**
