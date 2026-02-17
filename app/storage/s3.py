@@ -374,14 +374,5 @@ class S3Client:
             return None
 
 
-def get_s3_client(settings: Settings) -> S3Client:
-    """
-    Factory function to create S3 client.
-    
-    Args:
-        settings: Application settings
-    
-    Returns:
-        Configured S3Client instance
-    """
-    return S3Client(settings)
+def get_s3_client():
+    return None

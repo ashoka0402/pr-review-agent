@@ -6,7 +6,7 @@ determining when human review is needed.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 
 from app.llm.schemas import CodeReview, Severity, Category
@@ -19,186 +19,42 @@ class ConfidenceFactors:
     """Factors that influence confidence in a review."""
     
     # PR characteristics
-    pr_size: str  # "small", "medium", "large", "very_large"
-    files_changed: int
-    lines_changed: int
-    languages: List[str]
-    has_tests: bool
+    pr_size: str = "medium"  # "small", "medium", "large", "very_large"
+    files_changed: int = 0
+    lines_changed: int = 0
+    languages: List[str] = field(default_factory=list)
+    has_tests: bool = False
     
     # Static analysis coverage
-    linting_coverage: float  # 0.0-1.0
-    security_scan_coverage: float  # 0.0-1.0
-    complexity_analysis_coverage: float  # 0.0-1.0
+    linting_coverage: float = 0.0  # 0.0-1.0
+    security_scan_coverage: float = 0.0  # 0.0-1.0
+    complexity_analysis_coverage: float = 0.0  # 0.0-1.0
     
     # Review characteristics
-    num_comments: int
-    avg_comment_confidence: float  # 0.0-1.0
-    has_critical_issues: bool
-    has_security_issues: bool
+    num_findings: int = 0
+    num_inline_comments: int = 0
+    avg_finding_confidence: float = 0.5  # 0.0-1.0
+    has_critical_issues: bool = False
+    has_security_issues: bool = False
     
     # Context availability
-    has_description: bool
-    has_related_files: bool
-    known_patterns: bool  # Whether code uses familiar patterns
+    has_description: bool = False
+    has_related_files: bool = False
+    known_patterns: bool = False
 
 
-def calculate_confidence_score(
-    review: CodeReview,
-    factors: ConfidenceFactors,
-) -> float:
-    """
-    Calculate overall confidence score for a review.
+class ConfidenceEvaluation:
+    """Result of confidence evaluation."""
     
-    Confidence is based on:
-    - PR size and complexity
-    - Static analysis coverage
-    - Review comment quality
-    - Context availability
-    
-    Args:
-        review: The generated review
-        factors: Contextual factors
-    
-    Returns:
-        Confidence score between 0.0 and 1.0
-    """
-    scores = []
-    
-    # Factor 1: PR size (smaller = more confident)
-    size_scores = {
-        "small": 1.0,
-        "medium": 0.85,
-        "large": 0.65,
-        "very_large": 0.45,
-    }
-    scores.append(size_scores.get(factors.pr_size, 0.5))
-    
-    # Factor 2: Static analysis coverage (higher = more confident)
-    avg_coverage = (
-        factors.linting_coverage +
-        factors.security_scan_coverage +
-        factors.complexity_analysis_coverage
-    ) / 3.0
-    scores.append(avg_coverage)
-    
-    # Factor 3: Review comment confidence
-    scores.append(factors.avg_comment_confidence)
-    
-    # Factor 4: Context availability
-    context_score = 0.0
-    if factors.has_description:
-        context_score += 0.25
-    if factors.has_tests:
-        context_score += 0.25
-    if factors.has_related_files:
-        context_score += 0.25
-    if factors.known_patterns:
-        context_score += 0.25
-    scores.append(context_score)
-    
-    # Factor 5: Language familiarity (Python = high confidence)
-    if "python" in [lang.lower() for lang in factors.languages]:
-        scores.append(0.9)
-    else:
-        scores.append(0.6)  # Lower confidence for other languages
-    
-    # Factor 6: Penalty for critical issues without high confidence
-    if factors.has_critical_issues:
-        critical_comments = review.get_comments_by_severity(Severity.CRITICAL)
-        if critical_comments:
-            avg_critical_confidence = sum(c.confidence for c in critical_comments) / len(critical_comments)
-            if avg_critical_confidence < 0.8:
-                scores.append(0.5)  # Penalize low-confidence critical issues
-    
-    # Calculate weighted average
-    overall_confidence = sum(scores) / len(scores)
-    
-    # Apply ceiling based on PR size
-    if factors.pr_size == "very_large":
-        overall_confidence = min(overall_confidence, 0.75)
-    
-    logger.info(f"Calculated confidence: {overall_confidence:.2f} (factors: {len(scores)})")
-    return overall_confidence
-
-
-def needs_human_review(
-    review: CodeReview,
-    confidence_score: float,
-    threshold: float = 0.7,
-) -> bool:
-    """
-    Determine if human review is needed.
-    
-    Args:
-        review: The generated review
-        confidence_score: Overall confidence score
-        threshold: Confidence threshold (default: 0.7)
-    
-    Returns:
-        True if human review is recommended
-    """
-    # Always need human review if confidence is below threshold
-    if confidence_score < threshold:
-        return True
-    
-    # Need human review for critical issues
-    if review.has_blocking_issues():
-        critical_comments = review.get_comments_by_severity(Severity.CRITICAL)
-        # If any critical comment has low confidence, need human review
-        if any(c.confidence < 0.8 for c in critical_comments):
-            return True
-    
-    # Need human review for security issues with low confidence
-    security_comments = review.get_comments_by_category(Category.SECURITY)
-    if security_comments:
-        if any(c.confidence < 0.75 for c in security_comments):
-            return True
-    
-    return False
-
-
-def identify_uncertain_areas(
-    review: CodeReview,
-    factors: ConfidenceFactors,
-) -> List[str]:
-    """
-    Identify specific areas where the review is uncertain.
-    
-    Args:
-        review: The generated review
-        factors: Contextual factors
-    
-    Returns:
-        List of uncertain areas
-    """
-    uncertain = []
-    
-    # Large PRs are inherently uncertain
-    if factors.pr_size in ["large", "very_large"]:
-        uncertain.append(f"Large PR ({factors.lines_changed} lines changed)")
-    
-    # Low comment confidence
-    low_confidence_comments = [c for c in review.comments if c.confidence < 0.7]
-    if low_confidence_comments:
-        files = set(c.file_path for c in low_confidence_comments)
-        uncertain.append(f"Low confidence in {len(files)} file(s)")
-    
-    # Missing static analysis coverage
-    if factors.linting_coverage < 0.5:
-        uncertain.append("Limited linting coverage")
-    if factors.security_scan_coverage < 0.5:
-        uncertain.append("Limited security scan coverage")
-    
-    # No tests
-    if not factors.has_tests:
-        uncertain.append("No test files in PR")
-    
-    # Unfamiliar languages
-    non_python = [lang for lang in factors.languages if lang.lower() != "python"]
-    if non_python:
-        uncertain.append(f"Non-Python languages: {', '.join(non_python)}")
-    
-    return uncertain
+    def __init__(
+        self,
+        overall_score: float,
+        level: str,
+        factors: ConfidenceFactors,
+    ):
+        self.overall_score = overall_score
+        self.level = level  # "high", "medium", "low"
+        self.factors = factors
 
 
 class ConfidenceEvaluator:
@@ -217,7 +73,7 @@ class ConfidenceEvaluator:
         self,
         review: CodeReview,
         context: Dict[str, Any],
-    ) -> Dict[str, Any]:
+    ) -> ConfidenceEvaluation:
         """
         Evaluate confidence in a review.
         
@@ -228,48 +84,68 @@ class ConfidenceEvaluator:
         Returns:
             Evaluation results with confidence score and recommendations
         """
-        # Extract factors from context
-        factors = self._extract_factors(review, context)
-        
-        # Calculate confidence score
-        confidence_score = calculate_confidence_score(review, factors)
-        
-        # Determine if human review is needed
-        needs_human = needs_human_review(review, confidence_score, self.threshold)
-        
-        # Identify uncertain areas
-        uncertain_areas = identify_uncertain_areas(review, factors)
-        
-        # Generate reasoning
-        reasoning = self._generate_reasoning(
-            confidence_score,
-            factors,
-            needs_human,
-            uncertain_areas
-        )
-        
-        return {
-            "overall_confidence": confidence_score,
-            "needs_human_review": needs_human,
-            "reasoning": reasoning,
-            "uncertain_areas": uncertain_areas,
-            "factors": factors,
-        }
+        try:
+            # Extract factors from context
+            factors = self._extract_factors(review, context)
+            
+            # Calculate overall confidence score
+            overall_score = self._calculate_confidence_score(review, factors)
+            
+            # Determine confidence level
+            if overall_score >= 0.85:
+                level = "high"
+            elif overall_score >= 0.65:
+                level = "medium"
+            else:
+                level = "low"
+            
+            logger.info(
+                f"Confidence evaluation: {level} ({overall_score:.2f})",
+                extra={
+                    "pr_size": factors.pr_size,
+                    "findings": factors.num_findings,
+                    "has_critical": factors.has_critical_issues,
+                }
+            )
+            
+            return ConfidenceEvaluation(
+                overall_score=overall_score,
+                level=level,
+                factors=factors,
+            )
+            
+        except Exception as e:
+            logger.error(f"Confidence evaluation failed: {e}", exc_info=True)
+            # Return default medium confidence on error
+            return ConfidenceEvaluation(
+                overall_score=0.65,
+                level="medium",
+                factors=ConfidenceFactors(),
+            )
     
     def _extract_factors(
         self,
         review: CodeReview,
         context: Dict[str, Any],
     ) -> ConfidenceFactors:
-        """Extract confidence factors from context."""
+        """Extract confidence factors from review and context."""
         
-        # PR characteristics
+        # PR characteristics from context
         pr_info = context.get("pr_info", {})
-        diff_info = context.get("diff_info", {})
+        diff_info = context.get("diff_info")
         static_analysis = context.get("static_analysis", {})
         
+        # Safe defaults if diff_info missing
+        if diff_info:
+            lines_changed = getattr(diff_info, 'total_changes', 0)
+            files_changed = getattr(diff_info, 'files_changed', 0)
+            file_names = [getattr(f, 'filename', '') for f in getattr(diff_info, 'file_changes', [])]
+        else:
+            lines_changed = 0
+            files_changed = 0
+            file_names = []
+        
         # Determine PR size
-        lines_changed = diff_info.get("total_changes", 0)
         if lines_changed < 100:
             pr_size = "small"
         elif lines_changed < 500:
@@ -279,8 +155,7 @@ class ConfidenceEvaluator:
         else:
             pr_size = "very_large"
         
-        # Calculate static analysis coverage
-        files_changed = len(diff_info.get("files", []))
+        # Static analysis coverage
         linting_files = len(static_analysis.get("linting", {}).get("files_analyzed", []))
         security_files = len(static_analysis.get("security", {}).get("files_analyzed", []))
         complexity_files = len(static_analysis.get("complexity", {}).get("files_analyzed", []))
@@ -289,68 +164,149 @@ class ConfidenceEvaluator:
         security_coverage = security_files / max(files_changed, 1)
         complexity_coverage = complexity_files / max(files_changed, 1)
         
-        # Calculate average comment confidence
-        avg_confidence = (
-            sum(c.confidence for c in review.comments) / len(review.comments)
-            if review.comments else 0.5
+        # Detect tests
+        has_tests = any("test" in f.lower() for f in file_names)
+        
+        # Review characteristics from CodeReview object
+        num_findings = len(review.findings) if review.findings else 0
+        num_inline_comments = len(review.inline_comments) if review.inline_comments else 0
+        
+        # Calculate average finding severity as confidence indicator
+        if review.findings:
+            severity_scores = {
+                "critical": 0.9,
+                "high": 0.8,
+                "medium": 0.7,
+                "low": 0.6,
+                "info": 0.5,
+            }
+            avg_confidence = sum(
+                severity_scores.get(f.severity.lower(), 0.5) 
+                for f in review.findings
+            ) / len(review.findings)
+        else:
+            avg_confidence = 0.7
+        
+        # Check for critical/security issues
+        has_critical = any(
+            f.severity.lower() == "critical" 
+            for f in (review.findings or [])
+        )
+        has_security = any(
+            "security" in f.category.lower() 
+            for f in (review.findings or [])
         )
         
-        # Detect tests
-        files = diff_info.get("files", [])
-        has_tests = any("test" in f.lower() for f in files)
+        # Languages (derive from file extensions)
+        languages = list({
+            f.split(".")[-1]
+            for f in file_names
+            if "." in f
+        })
         
         return ConfidenceFactors(
             pr_size=pr_size,
             files_changed=files_changed,
             lines_changed=lines_changed,
-            languages=diff_info.get("languages", []),
+            languages=languages,
             has_tests=has_tests,
-            linting_coverage=linting_coverage,
-            security_scan_coverage=security_coverage,
-            complexity_analysis_coverage=complexity_coverage,
-            num_comments=len(review.comments),
-            avg_comment_confidence=avg_confidence,
-            has_critical_issues=review.has_blocking_issues(),
-            has_security_issues=bool(review.get_comments_by_category(Category.SECURITY)),
+            linting_coverage=min(linting_coverage, 1.0),
+            security_scan_coverage=min(security_coverage, 1.0),
+            complexity_analysis_coverage=min(complexity_coverage, 1.0),
+            num_findings=num_findings,
+            num_inline_comments=num_inline_comments,
+            avg_finding_confidence=avg_confidence,
+            has_critical_issues=has_critical,
+            has_security_issues=has_security,
             has_description=bool(pr_info.get("description")),
             has_related_files=bool(context.get("file_context")),
-            known_patterns=True,  # Could be enhanced with pattern detection
+            known_patterns=True,
         )
     
-    def _generate_reasoning(
+    def _calculate_confidence_score(
         self,
-        confidence_score: float,
+        review: CodeReview,
         factors: ConfidenceFactors,
-        needs_human: bool,
-        uncertain_areas: List[str],
-    ) -> str:
-        """Generate human-readable reasoning for confidence assessment."""
+    ) -> float:
+        """Calculate overall confidence score for a review."""
         
-        if confidence_score >= 0.85:
-            quality = "high"
-        elif confidence_score >= 0.7:
-            quality = "moderate"
+        scores = []
+        
+        # Factor 1: PR size (smaller = more confident)
+        size_scores = {
+            "small": 1.0,
+            "medium": 0.85,
+            "large": 0.65,
+            "very_large": 0.45,
+        }
+        scores.append(size_scores.get(factors.pr_size, 0.5))
+        
+        # Factor 2: Static analysis coverage (higher = more confident)
+        avg_coverage = (
+            factors.linting_coverage +
+            factors.security_scan_coverage +
+            factors.complexity_analysis_coverage
+        ) / 3.0
+        scores.append(avg_coverage)
+        
+        # Factor 3: Finding confidence
+        scores.append(factors.avg_finding_confidence)
+        
+        # Factor 4: Review completeness (findings + comments)
+        completeness = (min(factors.num_findings / 5.0, 1.0) + 
+                       min(factors.num_inline_comments / 10.0, 1.0)) / 2.0
+        scores.append(completeness)
+        
+        # Factor 5: Context availability
+        context_score = 0.0
+        if factors.has_description:
+            context_score += 0.25
+        if factors.has_tests:
+            context_score += 0.25
+        if factors.has_related_files:
+            context_score += 0.25
+        if factors.known_patterns:
+            context_score += 0.25
+        scores.append(context_score)
+        
+        # Factor 6: Risk (critical issues lower confidence)
+        if factors.has_critical_issues:
+            scores.append(0.6)
+        elif factors.has_security_issues:
+            scores.append(0.7)
         else:
-            quality = "low"
+            scores.append(0.9)
         
-        reasoning_parts = [
-            f"Review confidence is {quality} ({confidence_score:.2f}).",
-        ]
+        # Calculate weighted average
+        overall_confidence = sum(scores) / len(scores)
         
-        # Add size context
-        reasoning_parts.append(
-            f"PR is {factors.pr_size} ({factors.lines_changed} lines, "
-            f"{factors.files_changed} files)."
-        )
+        # Apply ceiling based on PR size
+        if factors.pr_size == "very_large":
+            overall_confidence = min(overall_confidence, 0.75)
+        elif factors.pr_size == "large":
+            overall_confidence = min(overall_confidence, 0.85)
         
-        # Add static analysis context
-        if factors.linting_coverage > 0.8:
-            reasoning_parts.append("Good static analysis coverage.")
-        elif factors.linting_coverage < 0.5:
-            reasoning_parts.append("Limited static analysis coverage.")
-        
-        # Add human review recommendation
-        if needs_human:
-            reasoning_parts.append("Human review is recommended.")
-        
-        return " ".join(reasoning_parts)
+        return overall_confidence
+
+
+# Module-level function for backward compatibility
+def calculate_confidence_score(
+    review: CodeReview,
+    context: Dict[str, Any],
+) -> float:
+    """
+    Calculate confidence score for a review.
+    
+    This is a module-level function for backward compatibility.
+    Consider using ConfidenceEvaluator.evaluate() for full evaluation.
+    
+    Args:
+        review: The generated review
+        context: Review context dictionary
+    
+    Returns:
+        Confidence score (0.0-1.0)
+    """
+    evaluator = ConfidenceEvaluator()
+    evaluation = evaluator.evaluate(review, context)
+    return evaluation.overall_score

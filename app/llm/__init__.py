@@ -9,19 +9,21 @@ This module provides:
 
 from app.llm.model import LLMClient, get_llm_client
 from app.llm.schemas import (
-    ReviewComment,
-    ReviewSummary,
     CodeReview,
-    ConfidenceScore,
     ReviewRecommendation,
+    ReviewComment,
+    Finding,
+    InlineComment,
+    Category,
+    Severity,
 )
 
 __all__ = [
-    "LLMClient",
-    "get_llm_client",
-    "ReviewComment",
-    "ReviewSummary",
     "CodeReview",
-    "ConfidenceScore",
     "ReviewRecommendation",
+    "ReviewComment",
+    "Finding",
+    "InlineComment",
+    "Category",
+    "Severity",
 ]

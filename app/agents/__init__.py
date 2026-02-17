@@ -7,14 +7,11 @@ This module provides:
 - Confidence scoring and refinement logic
 """
 
-from app.agent.reviewer import PRReviewer
-from app.agent.tools import ToolRegistry, ReviewTool
-from app.agent.confidence import ConfidenceEvaluator, calculate_confidence_score
+from app.agents.reviewer import PRReviewer
+from app.agents.confidence import ConfidenceEvaluator, calculate_confidence_score
 
 __all__ = [
     "PRReviewer",
-    "ToolRegistry",
-    "ReviewTool",
     "ConfidenceEvaluator",
     "calculate_confidence_score",
 ]

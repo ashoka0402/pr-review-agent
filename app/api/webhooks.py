@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter, Request, BackgroundTasks, Depends, Header
 from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any
+import json
 
 from app.dependencies import (
     verify_github_signature,
@@ -19,7 +20,8 @@ from app.dependencies import (
 from app.github.client import GitHubClient
 from app.llm.model import LLMClient
 from app.storage.s3 import S3Client
-from app.agent.reviewer import PRReviewer
+from app.agents.reviewer import PRReviewer
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,7 @@ async def github_webhook(
         JSONResponse: Acknowledgment response
     """
     # Parse webhook payload
-    payload = await request.json()
+    payload = json.loads(request.state.body)
     
     logger.info(
         "Received GitHub webhook",
@@ -222,14 +224,32 @@ async def execute_pr_review(
         )
         
         # Initialize PR reviewer agent
+        
+
         reviewer = PRReviewer(
+            settings=settings,
             github_client=github_client,
             llm_client=llm_client,
-            s3_client=s3_client,
         )
+
         
         # Execute review
-        review_result = await reviewer.review_pull_request(pr_context)
+        # Execute review
+        review_result = await reviewer.review_pr(
+            owner=pr_context["repository_owner"],
+            repo=pr_context["repository_name"],
+            pr_number=pr_context["pr_number"],
+            pr_info={
+                "title": pr_context["pr_title"],
+                "description": "",
+                "author": pr_context["pr_author"],
+                "url": pr_context["pr_url"],
+                
+            },
+            installation_id=pr_context["installation_id"],
+            
+        )
+
         
         logger.info(
             "PR review completed",
@@ -289,7 +309,7 @@ The automated PR review encountered an error and could not complete.
 Please check the logs or contact the maintainers for assistance.
 """
     
-    await github_client.post_issue_comment(
+    github_client.post_issue_comment(
         owner=pr_context["repository_owner"],
         repo=pr_context["repository_name"],
         issue_number=pr_context["pr_number"],

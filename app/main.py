@@ -13,7 +13,7 @@ from app.config import settings
 from app.observability.logging import setup_logging
 
 # Initialize structured logging
-setup_logging()
+setup_logging(settings)
 
 app = FastAPI(
     title="PR Review Agent",

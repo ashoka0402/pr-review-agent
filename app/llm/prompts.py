@@ -76,172 +76,176 @@ You must respond with valid JSON matching this schema:
 
 def build_review_prompt(
     pr_title: str,
-    pr_description: Optional[str],
+    pr_description: str,
     diff_content: str,
-    static_analysis_results: Optional[Dict] = None,
-    risk_signals: Optional[Dict] = None,
-    file_context: Optional[Dict[str, str]] = None,
+    static_analysis_results: Optional[Dict],
+    risk_signals: Optional[Dict],
+    file_context: Optional[Dict[str, str]],
 ) -> str:
-    """
-    Build the user prompt for code review.
+    """Build the review prompt for LLM."""
     
-    Args:
-        pr_title: Pull request title
-        pr_description: Pull request description/body
-        diff_content: Unified diff of changes
-        static_analysis_results: Results from linting, security scanning, complexity analysis
-        risk_signals: Risk indicators from heuristic analysis
-        file_context: Additional file content context {file_path: content}
+    prompt = f"""You are an expert code reviewer. Analyze this pull request and provide structured feedback.
+
+## Pull Request Information
+**Title:** {pr_title}
+**Description:** {pr_description if pr_description else "No description provided"}
+
+## Changes
+```diff
+{diff_content}
+```
+
+## Static Analysis Results
+{format_static_analysis(static_analysis_results)}
+
+## Risk Signals
+{format_risk_signals(risk_signals)}
+
+## Your Task
+Analyze the PR and provide your review in JSON format with the following structure:
+
+{{
+  "summary": "Brief overall assessment of the PR",
+  "risk_score": <number 0-10>,
+  "recommendation": "<APPROVE|REQUEST_CHANGES|COMMENT>",
+  "findings": [
+    {{
+      "category": "<Security|Code Quality|Performance|Best Practice|Testing|Documentation>",
+      "severity": "<critical|high|medium|low|info>",
+      "title": "Short title of the issue",
+      "description": "Detailed explanation",
+      "suggestion": "How to fix it",
+      "file_path": "path/to/file.py",
+      "line_number": 42
+    }}
+  ],
+  "inline_comments": [
+    {{
+      "file_path": "path/to/file.py",
+      "line_number": 42,
+      "suggestion": "Specific feedback on this line",
+      "severity": "<critical|high|medium|low|info>"
+    }}
+  ],
+  "metrics": {{
+    "files_changed": 3,
+    "lines_added": 150,
+    "lines_deleted": 50,
+    "complexity_increase": "medium"
+  }}
+}}
+
+Be thorough but concise. Focus on:
+1. Security vulnerabilities
+2. Code quality issues
+3. Performance concerns
+4. Best practices
+5. Testing coverage
+
+Return ONLY valid JSON, no markdown formatting."""
     
-    Returns:
-        Formatted prompt string
-    """
-    prompt_parts = [
-        "# Pull Request Review",
-        f"\n## PR Title\n{pr_title}",
-    ]
+    return prompt
+
+
+def format_static_analysis(results: Optional[Dict]) -> str:
+    """Format static analysis results."""
+    if not results:
+        return "No static analysis performed."
     
-    if pr_description:
-        prompt_parts.append(f"\n## PR Description\n{pr_description}")
+    lines = []
+    for tool, findings in results.items():
+        lines.append(f"### {tool}")
+        if findings:
+            for finding in findings:
+                lines.append(f"- {finding}")
+        else:
+            lines.append("- No issues found")
     
-    # Add static analysis results if available
-    if static_analysis_results:
-        prompt_parts.append("\n## Static Analysis Results")
-        
-        if "linting" in static_analysis_results:
-            linting = static_analysis_results["linting"]
-            if linting.get("issues"):
-                prompt_parts.append(f"\n### Linting Issues ({len(linting['issues'])} found)")
-                for issue in linting["issues"][:20]:  # Limit to 20 issues
-                    prompt_parts.append(
-                        f"- {issue['file']}:{issue['line']} [{issue['code']}] {issue['message']}"
-                    )
-        
-        if "security" in static_analysis_results:
-            security = static_analysis_results["security"]
-            if security.get("issues"):
-                prompt_parts.append(f"\n### Security Issues ({len(security['issues'])} found)")
-                for issue in security["issues"][:20]:
-                    prompt_parts.append(
-                        f"- {issue['file']}:{issue['line']} [{issue['severity']}] {issue['issue_text']}"
-                    )
-        
-        if "complexity" in static_analysis_results:
-            complexity = static_analysis_results["complexity"]
-            if complexity.get("high_complexity_functions"):
-                prompt_parts.append("\n### High Complexity Functions")
-                for func in complexity["high_complexity_functions"][:10]:
-                    prompt_parts.append(
-                        f"- {func['function']} in {func['file']}: complexity={func['complexity']}"
-                    )
+    return "\n".join(lines)
+
+
+def format_risk_signals(signals: Optional[Dict]) -> str:
+    """Format risk signals."""
+    if not signals:
+        return "No risk signals detected."
     
-    # Add risk signals
-    if risk_signals:
-        prompt_parts.append("\n## Risk Signals")
-        if risk_signals.get("is_large_pr"):
-            prompt_parts.append(f"⚠️ Large PR: {risk_signals.get('total_changes', 0)} lines changed")
-        if risk_signals.get("critical_files"):
-            prompt_parts.append(f"⚠️ Critical files modified: {', '.join(risk_signals['critical_files'][:5])}")
-        if risk_signals.get("has_db_migration"):
-            prompt_parts.append("⚠️ Contains database migrations")
-        if risk_signals.get("security_sensitive_files"):
-            prompt_parts.append(f"⚠️ Security-sensitive files: {', '.join(risk_signals['security_sensitive_files'][:5])}")
+    lines = []
+    for signal_type, details in signals.items():
+        lines.append(f"- **{signal_type}**: {details}")
     
-    # Add the diff
-    prompt_parts.append(f"\n## Code Changes\n```diff\n{diff_content}\n```")
-    
-    # Add file context if available
-    if file_context:
-        prompt_parts.append("\n## Additional File Context")
-        for file_path, content in file_context.items():
-            # Truncate large files
-            truncated_content = content[:5000] + "..." if len(content) > 5000 else content
-            prompt_parts.append(f"\n### {file_path}\n```\n{truncated_content}\n```")
-    
-    # Add instructions
-    prompt_parts.append(
-        "\n## Instructions\n"
-        "Review the code changes above and provide structured feedback as JSON. "
-        "Focus on correctness, security, performance, and maintainability. "
-        "Be specific and actionable. Acknowledge good practices. "
-        "Use the static analysis results to inform your review but add your own insights."
-    )
-    
-    return "\n".join(prompt_parts)
+    return "\n".join(lines)
 
 
 def build_refinement_prompt(
-    original_review: Dict,
-    feedback: str,
-    iteration: int,
+    pr_title: str,
+    pr_description: str,
+    diff_content: str,
+    initial_review: str,
+    uncertain_areas: List[str],
+    static_analysis_results: Optional[Dict] = None,
 ) -> str:
     """
-    Build a prompt for refining an existing review based on feedback.
+    Build a refinement prompt for re-analyzing uncertain areas.
     
-    Args:
-        original_review: The previous review output
-        feedback: Feedback or additional context for refinement
-        iteration: Current iteration number
-    
-    Returns:
-        Formatted refinement prompt
+    Used when confidence is low on certain aspects of the review.
     """
-    return f"""# Review Refinement (Iteration {iteration})
-
-## Previous Review
-{original_review}
-
-## Feedback/Additional Context
-{feedback}
-
-## Instructions
-Refine the previous review based on the feedback above. You may:
-- Add new comments if issues were missed
-- Remove or modify comments that are incorrect
-- Adjust severity levels or confidence scores
-- Update the overall recommendation
-
-Maintain the same JSON schema as before. Focus on improving accuracy and actionability.
-"""
-
-
-def build_confidence_assessment_prompt(
-    review: Dict,
-    context: Dict,
-) -> str:
-    """
-    Build a prompt for assessing confidence in a review.
     
-    Args:
-        review: The review to assess
-        context: Additional context (PR size, complexity, etc.)
+    uncertain_areas_str = "\n".join([f"- {area}" for area in uncertain_areas])
     
-    Returns:
-        Formatted confidence assessment prompt
-    """
-    return f"""# Review Confidence Assessment
+    prompt = f"""You are an expert code reviewer performing a deeper analysis on uncertain areas.
 
-## Review to Assess
-{review}
+## Original PR Information
+**Title:** {pr_title}
+**Description:** {pr_description if pr_description else "No description provided"}
 
-## Context
-- PR size: {context.get('pr_size', 'unknown')}
-- Files changed: {context.get('files_changed', 0)}
-- Languages: {context.get('languages', [])}
-- Has tests: {context.get('has_tests', False)}
+## Changes
+```diff
+{diff_content}
+```
 
-## Instructions
-Assess your confidence in this review. Consider:
-- Complexity of the changes
-- Availability of context (tests, documentation)
-- Clarity of the code
-- Your familiarity with the patterns/frameworks used
+## Initial Review Assessment
+```
+{initial_review}
+```
 
-Respond with JSON:
+## Areas Needing Deeper Analysis
+{uncertain_areas_str}
+
+## Your Task
+Re-analyze the code changes, focusing specifically on the uncertain areas listed above.
+Provide a refined review in JSON format:
+
 {{
-  "overall": 0.85,
-  "needs_human_review": false,
-  "reasoning": "Brief explanation",
-  "uncertain_areas": ["area1", "area2"]
+  "summary": "Refined assessment after deeper analysis",
+  "risk_score": <number 0-10>,
+  "recommendation": "<APPROVE|REQUEST_CHANGES|COMMENT>",
+  "findings": [
+    {{
+      "category": "<Security|Code Quality|Performance|Best Practice|Testing|Documentation>",
+      "severity": "<critical|high|medium|low|info>",
+      "title": "Short title of the issue",
+      "description": "Detailed explanation",
+      "suggestion": "How to fix it",
+      "file_path": "path/to/file.py",
+      "line_number": 42
+    }}
+  ],
+  "inline_comments": [
+    {{
+      "file_path": "path/to/file.py",
+      "line_number": 42,
+      "suggestion": "Specific feedback on this line",
+      "severity": "<critical|high|medium|low|info>"
+    }}
+  ],
+  "confidence_improvements": {{
+    "areas_clarified": ["area1", "area2"],
+    "remaining_concerns": ["concern1"],
+    "overall_confidence": 0.9
+  }}
 }}
-"""
+
+Focus on correctness and provide actionable feedback.
+Return ONLY valid JSON, no markdown formatting."""
+    
+    return prompt

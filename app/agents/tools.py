@@ -14,10 +14,10 @@ from typing import Any, Dict, List, Optional
 from app.github.client import GitHubClient
 from app.github.diff_fetcher import DiffFetcher
 from app.analysis.diff_parser import DiffParser
-from app.analysis.dependency_graph import DependencyAnalyzer
+from app.analysis.dependency_graph import DependencyGraph
 from app.analysis.risk_detector import RiskDetector
-from app.static_analysis.linting import LintRunner
-from app.static_analysis.security import SecurityScanner
+from app.static_analysis.linting import LintingAnalyzer
+from app.static_analysis.security import SecurityAnalyzer
 from app.static_analysis.complexity import ComplexityAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -65,40 +65,46 @@ class ReviewTool(ABC):
 
 class DiffFetchTool(ReviewTool):
     """Tool for fetching PR diffs."""
-    
+
     def __init__(self, github_client: GitHubClient):
         self.diff_fetcher = DiffFetcher(github_client)
-    
+
     @property
     def tool_type(self) -> ToolType:
         return ToolType.DIFF_FETCH
-    
-    async def execute(self, owner: str, repo: str, pr_number: int) -> ToolResult:
+
+    async def execute(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        installation_id: int,
+    ) -> ToolResult:
         """
         Fetch PR diff.
-        
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            pr_number: PR number
-        
-        Returns:
-            ToolResult with diff content and metadata
         """
         try:
-            diff_data = await self.diff_fetcher.fetch_pr_diff(owner, repo, pr_number)
+            diff_data = await self.diff_fetcher.fetch_pr_diff(
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
+                installation_id=installation_id,
+            )
+
             return ToolResult(
                 tool_type=self.tool_type,
                 success=True,
-                data=diff_data
+                data=diff_data,
             )
+
         except Exception as e:
             logger.error(f"Diff fetch failed: {e}")
             return ToolResult(
                 tool_type=self.tool_type,
                 success=False,
-                error=str(e)
+                error=str(e),
             )
+
 
 
 class FileFetchTool(ReviewTool):
@@ -195,7 +201,7 @@ class DependencyAnalysisTool(ReviewTool):
     """Tool for dependency analysis."""
     
     def __init__(self):
-        self.analyzer = DependencyAnalyzer()
+        self.analyzer = DependencyGraph()
     
     @property
     def tool_type(self) -> ToolType:
@@ -283,7 +289,7 @@ class LintingTool(ReviewTool):
     """Tool for linting."""
     
     def __init__(self):
-        self.runner = LintRunner()
+        self.runner = LintingAnalyzer()
     
     @property
     def tool_type(self) -> ToolType:
@@ -319,7 +325,7 @@ class SecurityScanTool(ReviewTool):
     """Tool for security scanning."""
     
     def __init__(self):
-        self.scanner = SecurityScanner()
+        self.scanner = SecurityAnalyzer()
     
     @property
     def tool_type(self) -> ToolType:

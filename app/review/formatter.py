@@ -101,7 +101,7 @@ def format_review_summary(
     parts = []
     
     # Title
-    parts.append("# 🤖 AI Code Review")
+    parts.append("# AI Code Review")
     parts.append("")
     
     # Executive summary
@@ -132,14 +132,14 @@ def format_review_summary(
     
     # Positive aspects
     if review.summary.positive_aspects:
-        parts.append("## ✨ Positive Aspects")
+        parts.append("##  Positive Aspects")
         for aspect in review.summary.positive_aspects:
             parts.append(f"- {aspect}")
         parts.append("")
     
     # Issue breakdown
     if review.comments:
-        parts.append("## 📊 Issue Breakdown")
+        parts.append("##  Issue Breakdown")
         parts.append("")
         
         # Count by severity
@@ -171,7 +171,7 @@ def format_review_summary(
     if static_analysis_summary:
         total_static_issues = sum(static_analysis_summary.values())
         if total_static_issues > 0:
-            parts.append("## 🔧 Static Analysis")
+            parts.append("##  Static Analysis")
             for tool, count in static_analysis_summary.items():
                 if count > 0:
                     parts.append(f"- {tool}: {count} issues")
@@ -187,7 +187,7 @@ def format_review_summary(
         ])
         
         if has_risks:
-            parts.append("## 🚩 Risk Signals")
+            parts.append("##  Risk Signals")
             if risk_signals.get("is_large_pr"):
                 parts.append(f"- ⚠️ Large PR: {risk_signals.get('total_changes', 0)} lines changed")
             if risk_signals.get("critical_files"):
@@ -201,7 +201,7 @@ def format_review_summary(
             parts.append("")
     
     # Confidence and human review notice
-    parts.append("## 🎯 Review Confidence")
+    parts.append("##  Review Confidence")
     confidence_level = "High" if confidence >= 0.8 else "Moderate" if confidence >= 0.7 else "Low"
     parts.append(f"**Confidence Level:** {confidence_level} ({confidence:.0%})")
     parts.append("")
@@ -222,7 +222,7 @@ def format_review_summary(
         ReviewRecommendation.COMMENT: "💬 **Comment** - Review feedback provided",
         ReviewRecommendation.REQUEST_CHANGES: "🔴 **Request Changes** - Blocking issues must be addressed",
     }
-    parts.append("## 🎬 Recommendation")
+    parts.append("##  Recommendation")
     parts.append(recommendation_text.get(review.recommendation, "Unknown"))
     parts.append("")
     
