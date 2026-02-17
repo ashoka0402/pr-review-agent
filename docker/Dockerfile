@@ -12,17 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# Stage 2: Runtime stage
-FROM python:3.11-slim
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1 \
+    my name is harshit thios is the noermal pr change demo 
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/root/.local/bin:$PATH" \
     APP_HOME=/app
