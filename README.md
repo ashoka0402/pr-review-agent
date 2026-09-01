@@ -1,5 +1,27 @@
 # PR Review Agent
 
+
+<p align="center">
+  <table>
+    <tr>
+      <td valign="middle">
+        <img
+          src="https://media.tenor.com/0I3t9md3cwsAAAAj/%D8%A7%D9%84%D9%81%D9%8A%D9%86%D8%B3%D8%A3%D9%88-%D9%87%D8%A7%D9%81%D9%8A.gif"
+          alt="Anime pointing"
+          width="240"
+        />
+      </td>
+      <td valign="middle" width="35"></td>
+      <td valign="middle">
+        <a href="https://github.com/apps/pr-review-agent-007">
+          <strong>⬇️ INSTALL PR REVIEW AGENT</strong>
+        </a>
+      </td>
+    </tr>
+  </table>
+</p>
+
+
 ### AI-Powered GitHub Pull Request Review with Static Analysis & Agentic Reasoning
 
 An AI-powered GitHub App that automatically analyzes Pull Requests by combining deterministic static analysis with LLM-based reasoning. It parses PR diffs, detects risk signals, runs code-quality and security checks, evaluates review confidence, and posts structured feedback directly to GitHub.
